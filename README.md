@@ -1,2 +1,2 @@
-# VisionLoop
-Love making vision boards but lose track of it in the first week itself? VisionLoop makes your life easier by manifesting those goals into small 10 minute tasks! (no black magic involved) ;P
+# SlothSteps
+I see your vision board in the corner too :") what if we made it more easier to do a task? simple. just tap Done, Too big, or Skip - and boom! you've got your year planned out. 
