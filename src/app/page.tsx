@@ -1,69 +1,340 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+type Goal = {
+  goal_id: string;
+  goal_text: string;
+  step_id: string | null;
+  step_text: string | null;
+  status: "pending" | "done" | "skipped" | null;
+};
 
 export default function Home() {
+  // Keep every hook at the top level of the component.
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [text, setText] = useState("");
+  const [image, setImage] = useState<File | null>(null);
+  const [extractedGoals, setExtractedGoals] = useState<string[]>([]);
+  const [screen, setScreen] = useState<1 | 2>(1);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [hasScanned, setHasScanned] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGoals() {
+      try {
+        const response = await fetch("/api/goals");
+        if (!response.ok) throw new Error("Could not load goals");
+
+        const data = await response.json();
+        if (!cancelled) setGoals(Array.isArray(data.goals) ? data.goals : []);
+      } catch {
+        if (!cancelled) {
+          setMessage("Couldn't load your saved goals. Please refresh.");
+        }
+      }
+    }
+
+    void loadGoals();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const reload = useCallback(async () => {
+    try {
+      const response = await fetch("/api/goals");
+      if (!response.ok) throw new Error("Could not load goals");
+
+      const data = await response.json();
+      setGoals(Array.isArray(data.goals) ? data.goals : []);
+    } catch {
+      setMessage("Couldn't load your saved goals. Please refresh.");
+    }
+  }, []);
+
+  // Extract goals from whichever input the user provided.
+  async function rescanGoals() {
+    if (!text.trim() && !image) {
+      setMessage("Add some text or choose an image to scan. Either one is enough!");
+      setExtractedGoals([]);
+      setHasScanned(false);
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const formData = new FormData();
+
+      if (text.trim()) {
+        formData.append("text", text.trim());
+      }
+
+      if (image) {
+        formData.append("image", image);
+      }
+
+      const response = await fetch("/api/goals/extract", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Couldn't extract goals.");
+      }
+
+      const results = Array.isArray(data.goals) ? data.goals : [];
+
+      setExtractedGoals(
+        results.filter(
+          (goal: unknown): goal is string =>
+            typeof goal === "string" && goal.trim().length > 0
+        )
+      );
+      setHasScanned(true);
+
+      if (results.length === 0) {
+        setMessage("No goals found. Try different text or another image.");
+      } else {
+        setMessage(`Found ${results.length} goal(s). Review them below.`);
+      }
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong while scanning."
+      );
+      setHasScanned(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Save each extracted goal using the existing goals API.
+  async function saveGoals() {
+    const goalsToSave = extractedGoals
+      .map((goal) => goal.trim())
+      .filter(Boolean);
+
+    if (!hasScanned || goalsToSave.length === 0) {
+      setMessage("Scan your input first so there are goals to save.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    try {
+      for (const title of goalsToSave) {
+        const response = await fetch("/api/goals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: title,
+            source: image ? "image" : "manual",
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || `Couldn't save: ${title}`);
+        }
+      }
+
+      await reload();
+      setScreen(2);
+      setMessage("Goals saved. Let's take one small step.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Couldn't save your goals."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateStep(
+    stepId: string,
+    action: "done" | "too_big" | "skip"
+  ) {
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const body =
+        action === "too_big"
+          ? { shrink: true }
+          : { status: action === "done" ? "done" : "skipped" };
+
+      const response = await fetch(`/api/steps/${stepId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Couldn't update this step.");
+      }
+
+      await reload();
+
+      if (action === "done") {
+        setMessage("Nice! One small step completed.");
+      } else if (action === "too_big") {
+        setMessage("Let's make that step smaller.");
+      } else {
+        setMessage("Skipped for now. No pressure.");
+      }
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Couldn't update this step."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="app-shell">
+      <header className="masthead">
+        <a className="wordmark" href="#top" aria-label="SlothSteps home">
+          <span className="wordmark-mark" aria-hidden="true">S</span>
+          <span>sloth<span className="wordmark-light">steps</span></span>
+        </a>
+        <p className="masthead-note">A gentler way to get moving</p>
+      </header>
+
+      <section className="intro" id="top">
+        <p className="eyebrow">Make progress at your own pace</p>
+        <h1>Make room for <em>one thing.</em></h1>
+        <p className="intro-copy">
+          You don&apos;t need the whole plan today. Find one thing that matters,
+          then make the next step small enough to start.
+        </p>
+      </section>
+
+      <nav className="step-nav" aria-label="Your workflow">
+        <button type="button" onClick={() => setScreen(1)} aria-current={screen === 1 ? "step" : undefined} className={`step-tab ${screen === 1 ? "step-tab-active" : ""}`}>
+          <span className="step-number">01</span><span>Your goals</span>
+        </button>
+        <button type="button" onClick={() => setScreen(2)} aria-current={screen === 2 ? "step" : undefined} className={`step-tab ${screen === 2 ? "step-tab-active" : ""}`}>
+          <span className="step-number">02</span><span>One small step</span>
+        </button>
+      </nav>
+
+      <div className="workspace-grid">
+        <div className="workspace-main">
+          {message && <p role="status" className="status-message">{message}</p>}
+
+          {screen === 1 && (
+            <section className="workflow-panel">
+              <div className="panel-heading">
+                <div><p className="eyebrow">Start where you are</p><h2>What&apos;s on your mind?</h2></div>
+                <span className="panel-index">01 / 02</span>
+              </div>
+              <p className="panel-description">Add a few notes, choose an image, or use both. At least one is needed to find your goals.</p>
+
+              <div className="field-group">
+                <label htmlFor="goal-text" className="field-label">Goals or notes <span>TEXT</span></label>
+                <textarea id="goal-text" value={text} onChange={(event) => { setText(event.target.value); setHasScanned(false); }} placeholder={"Learn machine learning\nBuild a project\nPrepare for an exam"} rows={5} className="goal-textarea" />
+              </div>
+
+              <div className="field-group">
+                <label htmlFor="goal-image" className="field-label">Vision board or image <span>IMAGE</span></label>
+                <div className="upload-area">
+                  <input id="goal-image" type="file" accept="image/*" onChange={(event) => { setImage(event.target.files?.[0] ?? null); setHasScanned(false); }} className="upload-input" />
+                  <label htmlFor="goal-image" className="upload-label">
+                    <span className="upload-symbol" aria-hidden="true">+</span>
+                    <span><strong>{image ? "Choose a different image" : "Choose an image"}</strong><small>PNG, JPG, or another image format</small></span>
+                  </label>
+                  {image && <div className="selected-file"><span className="file-indicator" aria-hidden="true" /><span className="file-name">{image.name}</span><button type="button" onClick={() => { setImage(null); setHasScanned(false); }} className="text-action">Remove</button></div>}
+                </div>
+              </div>
+
+              <button type="button" onClick={rescanGoals} disabled={busy} className="secondary-button scan-button">
+                {busy ? "Finding your goals…" : hasScanned ? "Scan again" : "Find my goals"}<span aria-hidden="true">→</span>
+              </button>
+
+              {hasScanned && (
+                <div className="results-panel">
+                  <div className="results-heading"><div><p className="eyebrow">Your first draft</p><h3>Review your goals</h3></div><span className="result-count">{extractedGoals.filter((goal) => goal.trim()).length}</span></div>
+                  {extractedGoals.length > 0 ? (
+                    <ul className="goal-list">
+                      {extractedGoals.map((goal, index) => (
+                        <li key={index} className="goal-list-item">
+                          <label className="sr-only" htmlFor={`extracted-goal-${index}`}>Goal {index + 1}</label>
+                          <input id={`extracted-goal-${index}`} value={goal} onChange={(event) => setExtractedGoals((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} className="goal-edit-input" />
+                          <button type="button" onClick={() => setExtractedGoals((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="remove-goal" aria-label={`Remove goal ${index + 1}`} title="Remove goal">×</button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p className="empty-results">No goals to show yet. Try changing your input and scanning again.</p>}
+                  <button type="button" onClick={() => setExtractedGoals((current) => [...current, ""])} className="text-action add-goal">+ Add a goal</button>
+                </div>
+              )}
+
+              <button type="button" onClick={saveGoals} disabled={busy || !hasScanned || !extractedGoals.some((goal) => goal.trim())} className="primary-button">
+                {busy ? "Saving your goals…" : "Save goals & continue"}<span aria-hidden="true">→</span>
+              </button>
+            </section>
+          )}
+
+          {screen === 2 && (
+            <section className="step-panel">
+              <div className="panel-heading"><div><p className="eyebrow">No rush, no perfect plan</p><h2>Just one small step</h2></div><span className="panel-index">02 / 02</span></div>
+              <p className="panel-description">Pick what feels manageable. You can always make it smaller.</p>
+              {goals.length === 0 ? (
+                <div className="empty-state">
+                  <span className="empty-mark" aria-hidden="true">＋</span>
+                  <h3>Your next step starts with a goal.</h3>
+                  <p>Add something you&apos;d like to work toward, big or small.</p>
+                  <button type="button" onClick={() => setScreen(1)} className="secondary-button">Add your first goal <span aria-hidden="true">→</span></button>
+                </div>
+              ) : (
+                <div className="saved-goals">
+                  {goals.map((goal, index) => (
+                    <article key={goal.goal_id} className={`saved-goal ${goal.status === "done" || goal.status === "skipped" ? "saved-goal-settled" : ""}`}>
+                      <div className="saved-goal-heading">
+                        <span className="goal-sequence">{String(index + 1).padStart(2, "0")}</span>
+                        <h3>{goal.goal_text}</h3>
+                        {goal.status && goal.status !== "pending" && <span className={`goal-status goal-status-${goal.status}`}>{goal.status === "done" ? "Done" : "Later"}</span>}
+                      </div>
+                      <p className="next-step-label">A possible next step</p>
+                      <p className="next-step-text">{goal.step_text || "Choose one small action to get started."}</p>
+                      {goal.status === "pending" && (
+                        <div className="step-actions">
+                          <button type="button" disabled={busy || !goal.step_id} onClick={() => goal.step_id && updateStep(goal.step_id, "done")} className="done-button"><span aria-hidden="true">✓</span> Done</button>
+                          <button type="button" disabled={busy || !goal.step_id} onClick={() => goal.step_id && updateStep(goal.step_id, "too_big")} className="step-action-button">Make it smaller</button>
+                          <button type="button" disabled={busy || !goal.step_id} onClick={() => goal.step_id && updateStep(goal.step_id, "skip")} className="step-action-button quiet-action">Later</button>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+              <button type="button" onClick={() => setScreen(1)} className="back-link"><span aria-hidden="true">←</span> Back to your goals</button>
+            </section>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+        <aside className="side-note">
+          <p className="eyebrow">A note for today</p>
+          <div className="side-note-rule" />
+          <p className="side-note-quote">You&apos;re allowed to begin before you feel ready.</p>
+          <p className="side-note-copy">A small, kind step still counts as progress. Especially on the days when everything feels like a lot.</p>
+          <div className="side-note-footer"><span className="saved-count">{goals.length}</span><span>{goals.length === 1 ? "goal saved" : "goals saved"}</span></div>
+        </aside>
+      </div>
+      <footer className="page-footer"><span>SlothSteps</span><span>Small is a strategy.</span></footer>
+    </main>
   );
 }
