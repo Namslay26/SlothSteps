@@ -109,6 +109,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .secondary-button:hover:not(:disabled) { background: #eaf1e9; }
 .scan-button { margin-top: 15px; }
 
+.extraction-progress { margin-top: 12px; padding: 11px 13px; border: 1px solid #dfe8de; border-radius: 6px; color: #526057; background: #f8faf6; font-size: 11px; }
+.extraction-status-row { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.loading-indicator { width: 13px; height: 13px; flex: 0 0 13px; border: 2px solid #cbd9cb; border-top-color: var(--green); border-radius: 50%; animation: extraction-spin 750ms linear infinite; }
+.progress-track { position: relative; overflow: hidden; height: 4px; margin-top: 9px; border-radius: 4px; background: #e4ebe2; }
+.progress-fill { display: block; height: 100%; border-radius: inherit; background: var(--green); transition: width 120ms linear; }
+.progress-indeterminate { position: absolute; width: 38%; animation: extraction-progress 1.2s ease-in-out infinite; }
+
 .results-panel { margin-top: 22px; padding: 17px; border: 1px solid #e0e7df; border-radius: 7px; background: #f8faf6; }
 .results-heading { justify-content: space-between; margin-bottom: 13px; }
 .results-heading h3 { margin: 3px 0 0; font-size: 15px; font-weight: 670; }
@@ -163,6 +170,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
 @keyframes arrive { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes extraction-spin { to { transform: rotate(360deg); } }
+@keyframes extraction-progress { from { transform: translateX(-110%); } to { transform: translateX(270%); } }
 
 @media (max-width: 760px) {
   .app-shell { width: min(100% - 36px, 600px); padding-top: 19px; }

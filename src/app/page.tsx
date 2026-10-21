@@ -10,6 +10,11 @@ type Goal = {
   status: "pending" | "done" | "skipped" | null;
 };
 
+type ExtractionResponse = {
+  goals?: unknown;
+  error?: string;
+};
+
 export default function Home() {
   // Keep every hook at the top level of the component.
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -18,6 +23,8 @@ export default function Home() {
   const [extractedGoals, setExtractedGoals] = useState<string[]>([]);
   const [screen, setScreen] = useState<1 | 2>(1);
   const [busy, setBusy] = useState(false);
+  const [extractStatus, setExtractStatus] = useState<"uploading" | "processing" | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [hasScanned, setHasScanned] = useState(false);
 
@@ -66,6 +73,8 @@ export default function Home() {
     }
 
     setBusy(true);
+    setExtractStatus(image ? "uploading" : "processing");
+    setUploadProgress(null);
     setMessage("");
 
     try {
@@ -79,16 +88,39 @@ export default function Home() {
         formData.append("image", image);
       }
 
-      const response = await fetch("/api/goals/extract", {
-        method: "POST",
-        body: formData,
+      const data = await new Promise<ExtractionResponse>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", "/api/goals/extract");
+        request.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) {
+            setUploadProgress(Math.round((event.loaded / event.total) * 100));
+          }
+        });
+        request.upload.addEventListener("load", () => {
+          setExtractStatus("processing");
+          setUploadProgress(null);
+        });
+        request.addEventListener("load", () => {
+          let result: ExtractionResponse;
+          try {
+            result = JSON.parse(request.responseText) as ExtractionResponse;
+          } catch {
+            reject(new Error("The server returned an unreadable response."));
+            return;
+          }
+
+          if (request.status < 200 || request.status >= 300) {
+            reject(new Error(result.error || "Couldn't extract goals."));
+            return;
+          }
+
+          resolve(result);
+        });
+        request.addEventListener("error", () => {
+          reject(new Error("Couldn't reach the server. Please try again."));
+        });
+        request.send(formData);
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Couldn't extract goals.");
-      }
 
       const results = Array.isArray(data.goals) ? data.goals : [];
 
@@ -114,6 +146,8 @@ export default function Home() {
       setHasScanned(false);
     } finally {
       setBusy(false);
+      setExtractStatus(null);
+      setUploadProgress(null);
     }
   }
 
@@ -245,24 +279,61 @@ export default function Home() {
 
               <div className="field-group">
                 <label htmlFor="goal-text" className="field-label">Goals or notes <span>TEXT</span></label>
-                <textarea id="goal-text" value={text} onChange={(event) => { setText(event.target.value); setHasScanned(false); }} placeholder={"Learn machine learning\nBuild a project\nPrepare for an exam"} rows={5} className="goal-textarea" />
+                <textarea id="goal-text" value={text} disabled={busy} onChange={(event) => { setText(event.target.value); setHasScanned(false); }} placeholder={"Learn machine learning\nBuild a project\nPrepare for an exam"} rows={5} className="goal-textarea" />
               </div>
 
               <div className="field-group">
                 <label htmlFor="goal-image" className="field-label">Vision board or image <span>IMAGE</span></label>
                 <div className="upload-area">
-                  <input id="goal-image" type="file" accept="image/*" onChange={(event) => { setImage(event.target.files?.[0] ?? null); setHasScanned(false); }} className="upload-input" />
+                  <input id="goal-image" type="file" accept="image/*" disabled={busy} onChange={(event) => { setImage(event.target.files?.[0] ?? null); setHasScanned(false); }} className="upload-input" />
                   <label htmlFor="goal-image" className="upload-label">
                     <span className="upload-symbol" aria-hidden="true">+</span>
                     <span><strong>{image ? "Choose a different image" : "Choose an image"}</strong><small>PNG, JPG, or another image format</small></span>
                   </label>
-                  {image && <div className="selected-file"><span className="file-indicator" aria-hidden="true" /><span className="file-name">{image.name}</span><button type="button" onClick={() => { setImage(null); setHasScanned(false); }} className="text-action">Remove</button></div>}
+                  {image && <div className="selected-file"><span className="file-indicator" aria-hidden="true" /><span className="file-name">{image.name}</span><button type="button" disabled={busy} onClick={() => { setImage(null); setHasScanned(false); }} className="text-action">Remove</button></div>}
                 </div>
               </div>
 
               <button type="button" onClick={rescanGoals} disabled={busy} className="secondary-button scan-button">
-                {busy ? "Finding your goals…" : hasScanned ? "Scan again" : "Find my goals"}<span aria-hidden="true">→</span>
+                {extractStatus === "uploading"
+                  ? "Uploading image…"
+                  : extractStatus === "processing"
+                    ? "Reading your input…"
+                    : hasScanned
+                      ? "Scan again"
+                      : "Find my goals"}<span aria-hidden="true">→</span>
               </button>
+
+              {extractStatus && (
+                <div className="extraction-progress" role="status" aria-live="polite" aria-atomic="true" aria-busy="true">
+                  <div className="extraction-status-row">
+                    <span className="loading-indicator" aria-hidden="true" />
+                    <span>
+                      {extractStatus === "uploading"
+                        ? uploadProgress === null
+                          ? `Uploading ${image?.name ?? "image"}…`
+                          : `Uploading image… ${uploadProgress}%`
+                        : image
+                          ? "Image received. Reading it for goals…"
+                          : "Finding goals from your notes…"}
+                    </span>
+                  </div>
+                  <div
+                    className="progress-track"
+                    role="progressbar"
+                    aria-label={extractStatus === "uploading" ? "Image upload progress" : "Goal extraction progress"}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={extractStatus === "uploading" ? uploadProgress ?? undefined : undefined}
+                    aria-valuetext={extractStatus === "processing" ? "Analyzing input" : undefined}
+                  >
+                    <span
+                      className={`progress-fill ${uploadProgress === null ? "progress-indeterminate" : ""}`}
+                      style={uploadProgress === null ? undefined : { width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {hasScanned && (
                 <div className="results-panel">
@@ -283,7 +354,7 @@ export default function Home() {
               )}
 
               <button type="button" onClick={saveGoals} disabled={busy || !hasScanned || !extractedGoals.some((goal) => goal.trim())} className="primary-button">
-                {busy ? "Saving your goals…" : "Save goals & continue"}<span aria-hidden="true">→</span>
+                {busy && !extractStatus ? "Saving your goals…" : "Save goals & continue"}<span aria-hidden="true">→</span>
               </button>
             </section>
           )}
