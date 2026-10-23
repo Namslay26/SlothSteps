@@ -2,12 +2,11 @@ import { mastra } from "@/mastra";
 import { friendlyError } from "./errors";
 import {
   chooseGoalForNextStep,
-  getLatestStepForGoal,
+  getCurrentFocusStep,
   getStep,
   listGoals,
   type StepRow,
 } from "./store";
-import { weekStart } from "./week";
 
 export { friendlyError };
 
@@ -33,24 +32,27 @@ export type PlanResult = {
   reason?: "no-goals" | "pending" | "already-planned";
 };
 
-// The weekly job and the "plan next week" button both call this.
-// - unfinished goals are left alone,
-// - a second step for the same goal in the same week is only created with `force`.
-export async function planNextStep(options: { force?: boolean; goalId?: string } = {}): Promise<PlanResult> {
+// The weekly job and the weekly-focus button both call this.
+// - an unfinished focus carries over until the person checks in,
+// - only one focus is planned in a week.
+export async function planNextStep(options: { goalId?: string } = {}): Promise<PlanResult> {
   const goals = listGoals();
   if (goals.length === 0) return { step: null, created: false, reason: "no-goals" };
   if (options.goalId && !goals.some((goal) => goal.id === options.goalId)) {
     throw new Error("GoalNotFound");
   }
 
+  const current = getCurrentFocusStep();
+  if (current) {
+    return {
+      step: current,
+      created: false,
+      reason: current.status === "pending" ? "pending" : "already-planned",
+    };
+  }
+
   const goalId = options.goalId ?? chooseGoalForNextStep()?.goalId;
   if (!goalId) return { step: null, created: false, reason: "pending" };
-
-  const latest = getLatestStepForGoal(goalId);
-  if (latest?.status === "pending") return { step: latest, created: false, reason: "pending" };
-  if (!options.force && latest && latest.week_start === weekStart()) {
-    return { step: latest, created: false, reason: "already-planned" };
-  }
 
   const run = await mastra.getWorkflow("planWeek").createRun();
   const { stepId } = await runWorkflow(() => run.start({ inputData: { goalId } }));

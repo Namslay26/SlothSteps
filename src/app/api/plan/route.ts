@@ -7,7 +7,6 @@ export async function POST(request: Request) {
   const parsed = planSchema.safeParse(await request.json().catch(() => ({})));
   try {
     const result = await planNextStep({
-      force: parsed.success ? parsed.data.force : false,
       goalId: parsed.success ? parsed.data.goalId : undefined,
     });
     return NextResponse.json(result);

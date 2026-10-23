@@ -14,7 +14,4 @@ export const stepStatusSchema = z
     message: "Provide a status or request a smaller step.",
   });
 
-export const planSchema = z.object({
-  force: z.boolean().optional(),
-  goalId: z.string().optional(),
-});
+export const planSchema = z.object({ goalId: z.string().optional() });

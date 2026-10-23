@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
-import { friendlyError, planNextStep } from "@/lib/planner";
+import { friendlyError } from "@/lib/planner";
 import { saveGoalsSchema } from "@/lib/schemas";
-import { listGoals, listGoalsWithSteps, replaceGoals } from "@/lib/store";
+import { chooseGoalForNextStep, getCurrentFocusStep, listGoals, replaceGoals } from "@/lib/store";
 
 export async function GET() {
-  return NextResponse.json({ goals: listGoalsWithSteps() });
+  return NextResponse.json({
+    goals: listGoals(),
+    step: getCurrentFocusStep(),
+    suggestedGoalId: chooseGoalForNextStep()?.goalId ?? "",
+  });
 }
 
-// Save the reviewed goals (replacing any earlier scan) and plan one step per goal.
+// Save goals first; the person chooses this week's focus before planning a step.
 export async function POST(request: Request) {
   const parsed = saveGoalsSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -16,15 +20,15 @@ export async function POST(request: Request) {
 
   try {
     replaceGoals(parsed.data.goals, parsed.data.source);
-    for (const goal of listGoals()) {
-      await planNextStep({ force: true, goalId: goal.id });
-    }
-    return NextResponse.json({ goals: listGoalsWithSteps() }, { status: 201 });
+    return NextResponse.json({
+      goals: listGoals(),
+      step: getCurrentFocusStep(),
+      suggestedGoalId: chooseGoalForNextStep()?.goalId ?? "",
+    }, { status: 201 });
   } catch (error) {
-    console.error("Failed to plan the first step:", error instanceof Error ? error.name : "error");
-    // The goals are saved; only the first step is missing. "Plan" can be retried.
+    console.error("Failed to save goals:", error instanceof Error ? error.name : "error");
     return NextResponse.json(
-      { error: friendlyError(error), goals: listGoalsWithSteps() },
+      { error: friendlyError(error) },
       { status: 502 },
     );
   }

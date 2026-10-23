@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "extract": "tsx scripts/extract-goals.ts"
+    "extract": "tsx scripts/extract-goals.ts",
+    "plan-next": "tsx scripts/plan-next.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.79.0",

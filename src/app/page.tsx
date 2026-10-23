@@ -1,17 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  CHECK_IN_DAYS,
+  createWeeklyCheckInCalendar,
+  type CheckInDay,
+} from "@/lib/check-in-calendar";
 
 type Step = {
   id: string;
+  goal_id: string;
   goal_text: string;
   text: string;
   minutes: number;
+  week_start: string;
   status: "pending" | "done" | "skipped";
   shrink_count: number;
 };
 
-type Goal = { id: string; text: string; step: Step | null };
+type Goal = { id: string; text: string };
 
 type ExtractionResponse = {
   goals?: unknown;
@@ -21,6 +28,8 @@ type ExtractionResponse = {
 export default function Home() {
   // Keep every hook at the top level of the component.
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [step, setStep] = useState<Step | null>(null);
+  const [selectedGoalId, setSelectedGoalId] = useState("");
   const [text, setText] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [extractedGoals, setExtractedGoals] = useState<string[]>([]);
@@ -30,6 +39,7 @@ export default function Home() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [hasScanned, setHasScanned] = useState(false);
+  const [checkInDay, setCheckInDay] = useState<CheckInDay>("SU");
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +53,8 @@ export default function Home() {
         if (!cancelled) {
           const saved = Array.isArray(data.goals) ? data.goals : [];
           setGoals(saved);
+          setStep(data.step ?? null);
+          setSelectedGoalId(data.step?.goal_id ?? data.suggestedGoalId ?? saved[0]?.id ?? "");
           if (saved.length > 0) setScreen(2); // return to saved goals
         }
       } catch {
@@ -64,7 +76,10 @@ export default function Home() {
       if (!response.ok) throw new Error("Could not load goals");
 
       const data = await response.json();
-      setGoals(Array.isArray(data.goals) ? data.goals : []);
+      const saved = Array.isArray(data.goals) ? data.goals : [];
+      setGoals(saved);
+      setStep(data.step ?? null);
+      setSelectedGoalId(data.step?.goal_id ?? data.suggestedGoalId ?? saved[0]?.id ?? "");
     } catch {
       setMessage("Couldn't load your saved goals. Please refresh.");
     }
@@ -158,8 +173,7 @@ export default function Home() {
     }
   }
 
-  // Save the reviewed goals in one request. A new scan replaces the old goals,
-  // and the first step for this week is planned on the server.
+  // Save the reviewed goals in one request. The person chooses a weekly focus next.
   async function saveGoals() {
     const goalsToSave = extractedGoals.map((goal) => goal.trim()).filter(Boolean);
 
@@ -180,12 +194,16 @@ export default function Home() {
       const data = await response.json().catch(() => ({}));
 
       // Goals are saved even if the first step failed; show what we have.
-      if (Array.isArray(data.goals)) setGoals(data.goals);
+      if (Array.isArray(data.goals)) {
+        setGoals(data.goals);
+        setSelectedGoalId(data.suggestedGoalId ?? data.goals[0]?.id ?? "");
+      }
+      setStep(data.step ?? null);
 
       if (!response.ok) throw new Error(data.error || "Couldn't save your goals.");
 
       setScreen(2);
-      setMessage("Goals saved. Here's your one small step for this week.");
+      setMessage("Goals saved. Choose one to focus on this week.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Couldn't save your goals.");
     } finally {
@@ -193,22 +211,26 @@ export default function Home() {
     }
   }
 
-  // Normally the weekly job does this; the button lets you try it right away.
-  async function planNext(goalId: string) {
+  async function planThisWeek() {
+    if (!selectedGoalId) {
+      setMessage("Choose a goal for this week's focus first.");
+      return;
+    }
+
     setBusy(true);
     setMessage("");
     try {
       const response = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true, goalId }),
+        body: JSON.stringify({ goalId: selectedGoalId }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Couldn't plan the next step.");
-      await reload();
-      setMessage("Here's the next small step for that goal.");
+      if (!response.ok) throw new Error(data.error || "Couldn't plan this week's focus.");
+      setStep(data.step ?? null);
+      setMessage(data.created ? "Your focus is ready. Take it one small step at a time." : "Your current weekly focus is ready whenever you are.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Couldn't plan the next step.");
+      setMessage(error instanceof Error ? error.message : "Couldn't plan this week's focus.");
     } finally {
       setBusy(false);
     }
@@ -242,11 +264,11 @@ export default function Home() {
       await reload();
 
       if (action === "done") {
-        setMessage("Nice! One small step completed.");
+        setMessage("Nice work. Your check-in is done for this week.");
       } else if (action === "too_big") {
-        setMessage("Let's make that step smaller.");
+        setMessage("No problem. Here's a gentler version of the same step.");
       } else {
-        setMessage("Skipped for now. No pressure.");
+        setMessage("Skipped for now. You can start fresh next week.");
       }
     } catch (error) {
       setMessage(
@@ -255,6 +277,25 @@ export default function Home() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function saveCheckInDay(day: CheckInDay) {
+    setCheckInDay(day);
+    const label = CHECK_IN_DAYS.find((option) => option.value === day)?.label ?? "selected day";
+    setMessage(`Reminder day set to ${label}. Download the calendar event when you're ready.`);
+  }
+
+  function downloadCheckInReminder() {
+    const calendar = createWeeklyCheckInCalendar(checkInDay, window.location.origin);
+    const url = URL.createObjectURL(new Blob([calendar], { type: "text/calendar;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "slothsteps-weekly-check-in.ics";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage("Calendar reminder downloaded. Add it to your calendar to get a weekly nudge.");
   }
 
   return (
@@ -281,7 +322,7 @@ export default function Home() {
           <span className="step-number">01</span><span>Your goals</span>
         </button>
         <button type="button" onClick={() => setScreen(2)} aria-current={screen === 2 ? "step" : undefined} className={`step-tab ${screen === 2 ? "step-tab-active" : ""}`}>
-          <span className="step-number">02</span><span>One small step</span>
+          <span className="step-number">02</span><span>This week&apos;s focus</span>
         </button>
       </nav>
 
@@ -381,8 +422,8 @@ export default function Home() {
 
           {screen === 2 && (
             <section className="step-panel">
-              <div className="panel-heading"><div><p className="eyebrow">No rush, no perfect plan</p><h2>A small step for each goal</h2></div><span className="panel-index">02 / 02</span></div>
-              <p className="panel-description">Work on any goal at your own pace. Make each step smaller whenever you need.</p>
+              <div className="panel-heading"><div><p className="eyebrow">One thing at a time</p><h2>This week&apos;s focus</h2></div><span className="panel-index">02 / 02</span></div>
+              <p className="panel-description">Choose one goal. SlothSteps will suggest one tiny action for the week. There&apos;s no penalty for taking your time.</p>
               {goals.length === 0 ? (
                 <div className="empty-state">
                   <span className="empty-mark" aria-hidden="true">＋</span>
@@ -390,43 +431,84 @@ export default function Home() {
                   <p>Add something you&apos;d like to work toward, big or small.</p>
                   <button type="button" onClick={() => setScreen(1)} className="secondary-button">Add your first goal <span aria-hidden="true">→</span></button>
                 </div>
-              ) : (
+              ) : step ? (
                 <div className="saved-goals">
-                  {goals.map((goal, index) => {
-                    const step = goal.step;
-                    return (
-                    <article key={goal.id} className={`saved-goal ${step && step.status !== "pending" ? "saved-goal-settled" : ""}`}>
-                      <div className="saved-goal-heading">
-                        <span className="goal-sequence">{String(index + 1).padStart(2, "0")}</span>
-                        <h3>{goal.text}</h3>
-                        {step && step.status !== "pending" && <span className={`goal-status goal-status-${step.status}`}>{step.status === "done" ? "Done" : "Later"}</span>}
-                      </div>
-                      {step ? (
-                        <>
-                          <p className="next-step-label">Next small step</p>
-                          <p className="next-step-text">{step.text}</p>
-                          <p className="next-step-label">{step.minutes} {step.minutes === 1 ? "minute" : "minutes"}{step.shrink_count > 0 ? ` · made smaller ${step.shrink_count}×` : ""}</p>
-                          {step.status === "pending" ? (
-                            <div className="step-actions">
-                              <button type="button" disabled={busy} onClick={() => updateStep(step.id, "done")} className="done-button"><span aria-hidden="true">✓</span> Done</button>
-                              <button type="button" disabled={busy} onClick={() => updateStep(step.id, "too_big")} className="step-action-button">Make it smaller</button>
-                              <button type="button" disabled={busy} onClick={() => updateStep(step.id, "skip")} className="step-action-button quiet-action">Later</button>
-                            </div>
-                          ) : (
-                            <div className="step-actions">
-                              <button type="button" disabled={busy} onClick={() => planNext(goal.id)} className="secondary-button">{busy ? "Planning…" : "Plan next step"}<span aria-hidden="true">→</span></button>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="step-actions">
-                          <button type="button" disabled={busy} onClick={() => planNext(goal.id)} className="secondary-button">{busy ? "Planning…" : "Plan a small step"}<span aria-hidden="true">→</span></button>
-                        </div>
+                  <article className={`saved-goal ${step.status !== "pending" ? "saved-goal-settled" : ""}`}>
+                    <div className="saved-goal-heading">
+                      <span className="goal-sequence" aria-hidden="true">✦</span>
+                      <h3>{step.goal_text}</h3>
+                      {step.status !== "pending" && (
+                        <span className={`goal-status goal-status-${step.status}`}>
+                          {step.status === "done" ? "Done" : "Skipped"}
+                        </span>
                       )}
-                    </article>
-                    );
-                  })}
+                    </div>
+                    <p className="next-step-label">Your tiny step</p>
+                    <p className="next-step-text">{step.text}</p>
+                    <p className="next-step-label">
+                      About {step.minutes} {step.minutes === 1 ? "minute" : "minutes"}
+                      {step.shrink_count > 0 ? ` · made smaller ${step.shrink_count}×` : ""}
+                    </p>
+                    {step.status === "pending" ? (
+                      <div className="step-actions">
+                        <button type="button" disabled={busy} onClick={() => updateStep(step.id, "done")} className="done-button"><span aria-hidden="true">✓</span> Done</button>
+                        <button type="button" disabled={busy} onClick={() => updateStep(step.id, "too_big")} className="step-action-button">Too big</button>
+                        <button type="button" disabled={busy} onClick={() => updateStep(step.id, "skip")} className="step-action-button quiet-action">Skip for now</button>
+                      </div>
+                    ) : (
+                      <div className="check-in-complete">
+                        <p>{step.status === "done" ? "You showed up for this goal. That counts." : "This goal can wait. You can choose a fresh focus next week."}</p>
+                      </div>
+                    )}
+                  </article>
+                  {goals.length > 1 && (
+                    <details className="all-goals">
+                      <summary>Your other goals ({goals.filter((goal) => goal.id !== step.goal_id).length})</summary>
+                      <ul>{goals.filter((goal) => goal.id !== step.goal_id).map((goal) => <li key={goal.id}>{goal.text}</li>)}</ul>
+                    </details>
+                  )}
                 </div>
+              ) : (
+                <div className="focus-picker">
+                  <label htmlFor="weekly-focus" className="field-label">Which goal feels right this week?</label>
+                  <select
+                    id="weekly-focus"
+                    value={selectedGoalId}
+                    disabled={busy}
+                    onChange={(event) => setSelectedGoalId(event.target.value)}
+                    className="focus-select"
+                  >
+                    {goals.map((goal) => <option key={goal.id} value={goal.id}>{goal.text}</option>)}
+                  </select>
+                  <p className="focus-hint">You can choose a different one next week. Nothing else needs your attention today.</p>
+                  <button type="button" onClick={planThisWeek} disabled={busy || !selectedGoalId} className="primary-button">
+                    {busy ? "Finding one small step…" : "Plan this week's tiny step"}<span aria-hidden="true">→</span>
+                  </button>
+                </div>
+              )}
+
+              {goals.length > 0 && (
+                <section className="reminder-panel" aria-labelledby="reminder-heading">
+                  <div className="reminder-heading">
+                    <span className="reminder-mark" aria-hidden="true">↻</span>
+                    <div>
+                      <p className="eyebrow">A gentle nudge</p>
+                      <h3 id="reminder-heading">Make space for a weekly check-in</h3>
+                      <p>Pick a day that feels easy to come back to. No pressure if plans change.</p>
+                    </div>
+                  </div>
+                  <div className="reminder-controls">
+                    <div className="reminder-day-field">
+                      <label htmlFor="check-in-day">Your check-in day</label>
+                      <select id="check-in-day" value={checkInDay} onChange={(event) => saveCheckInDay(event.target.value as CheckInDay)} className="focus-select">
+                        {CHECK_IN_DAYS.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}
+                      </select>
+                      <span className="reminder-time">9:00 a.m. · your local time</span>
+                    </div>
+                    <button type="button" onClick={downloadCheckInReminder} className="secondary-button">Add to my calendar<span aria-hidden="true">→</span></button>
+                  </div>
+                  <p className="reminder-note">We&apos;ll download a calendar event for you to add. It only says “SlothSteps weekly check-in” — never your goals or step.</p>
+                </section>
               )}
               <button type="button" onClick={() => setScreen(1)} className="back-link"><span aria-hidden="true">←</span> Back to your goals</button>
             </section>

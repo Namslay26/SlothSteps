@@ -43,16 +43,10 @@ export function getLatestStep(): StepRow | null {
   return (db.prepare(`${STEP_SELECT} ORDER BY s.rowid DESC LIMIT 1`).get() as StepRow | undefined) ?? null;
 }
 
-export function getLatestStepForGoal(goalId: string): StepRow | null {
-  return (
-    (db.prepare(`${STEP_SELECT} WHERE s.goal_id = ? ORDER BY s.rowid DESC LIMIT 1`).get(goalId) as
-      | StepRow
-      | undefined) ?? null
-  );
-}
-
-export function listGoalsWithSteps(): Array<GoalRow & { step: StepRow | null }> {
-  return listGoals().map((goal) => ({ ...goal, step: getLatestStepForGoal(goal.id) }));
+export function getCurrentFocusStep(): StepRow | null {
+  const latest = getLatestStep();
+  if (latest?.status === "pending" || latest?.week_start === weekStart()) return latest;
+  return null;
 }
 
 export function getStep(id: string): StepRow | null {
@@ -73,7 +67,6 @@ export function chooseGoalForNextStep(
           `SELECT g.id, g.text FROM goals g
            LEFT JOIN steps s ON s.goal_id = g.id
            GROUP BY g.id
-           HAVING SUM(CASE WHEN s.status = 'pending' THEN 1 ELSE 0 END) = 0
            ORDER BY COUNT(s.id) ASC, g.created_at ASC, g.rowid ASC LIMIT 1`,
         )
         .get() as { id: string; text: string } | undefined);
