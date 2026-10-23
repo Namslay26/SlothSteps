@@ -48,6 +48,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
+    kind TEXT,
     started_at TEXT NOT NULL,
     latency_ms INTEGER,
     tokens_in INTEGER,
@@ -56,3 +57,9 @@ db.exec(`
     error TEXT
   );
 `);
+
+// Older databases were created before runs.kind existed.
+const runColumns = db.prepare("PRAGMA table_info(runs)").all() as { name: string }[];
+if (!runColumns.some((column) => column.name === "kind")) {
+  db.exec("ALTER TABLE runs ADD COLUMN kind TEXT");
+}

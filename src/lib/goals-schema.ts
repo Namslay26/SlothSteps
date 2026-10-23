@@ -34,7 +34,3 @@ export const GoalsSchema = z.object({
 
 export type Goal = z.infer<typeof GoalSchema>;
 export type Goals = z.infer<typeof GoalsSchema>;
-
-// Ollama's `format` option takes a JSON schema and constrains the output to it.
-const { $schema: _ignored, ...schema } = z.toJSONSchema(GoalsSchema);
-export const goalsJsonSchema = schema;

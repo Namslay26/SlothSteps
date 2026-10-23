@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-type Goal = {
-  goal_id: string;
+type Step = {
+  id: string;
   goal_text: string;
-  step_id: string | null;
-  step_text: string | null;
-  status: "pending" | "done" | "skipped" | null;
+  text: string;
+  minutes: number;
+  status: "pending" | "done" | "skipped";
+  shrink_count: number;
 };
+
+type Goal = { id: string; text: string; step: Step | null };
 
 type ExtractionResponse = {
   goals?: unknown;
@@ -37,7 +40,11 @@ export default function Home() {
         if (!response.ok) throw new Error("Could not load goals");
 
         const data = await response.json();
-        if (!cancelled) setGoals(Array.isArray(data.goals) ? data.goals : []);
+        if (!cancelled) {
+          const saved = Array.isArray(data.goals) ? data.goals : [];
+          setGoals(saved);
+          if (saved.length > 0) setScreen(2); // return to saved goals
+        }
       } catch {
         if (!cancelled) {
           setMessage("Couldn't load your saved goals. Please refresh.");
@@ -151,11 +158,10 @@ export default function Home() {
     }
   }
 
-  // Save each extracted goal using the existing goals API.
+  // Save the reviewed goals in one request. A new scan replaces the old goals,
+  // and the first step for this week is planned on the server.
   async function saveGoals() {
-    const goalsToSave = extractedGoals
-      .map((goal) => goal.trim())
-      .filter(Boolean);
+    const goalsToSave = extractedGoals.map((goal) => goal.trim()).filter(Boolean);
 
     if (!hasScanned || goalsToSave.length === 0) {
       setMessage("Scan your input first so there are goals to save.");
@@ -166,29 +172,43 @@ export default function Home() {
     setMessage("");
 
     try {
-      for (const title of goalsToSave) {
-        const response = await fetch("/api/goals", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: title,
-            source: image ? "image" : "manual",
-          }),
-        });
+      const response = await fetch("/api/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goals: goalsToSave, source: image ? "image" : "manual" }),
+      });
+      const data = await response.json().catch(() => ({}));
 
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || `Couldn't save: ${title}`);
-        }
-      }
+      // Goals are saved even if the first step failed; show what we have.
+      if (Array.isArray(data.goals)) setGoals(data.goals);
 
-      await reload();
+      if (!response.ok) throw new Error(data.error || "Couldn't save your goals.");
+
       setScreen(2);
-      setMessage("Goals saved. Let's take one small step.");
+      setMessage("Goals saved. Here's your one small step for this week.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Couldn't save your goals."
-      );
+      setMessage(error instanceof Error ? error.message : "Couldn't save your goals.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Normally the weekly job does this; the button lets you try it right away.
+  async function planNext(goalId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true, goalId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Couldn't plan the next step.");
+      await reload();
+      setMessage("Here's the next small step for that goal.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Couldn't plan the next step.");
     } finally {
       setBusy(false);
     }
@@ -361,8 +381,8 @@ export default function Home() {
 
           {screen === 2 && (
             <section className="step-panel">
-              <div className="panel-heading"><div><p className="eyebrow">No rush, no perfect plan</p><h2>Just one small step</h2></div><span className="panel-index">02 / 02</span></div>
-              <p className="panel-description">Pick what feels manageable. You can always make it smaller.</p>
+              <div className="panel-heading"><div><p className="eyebrow">No rush, no perfect plan</p><h2>A small step for each goal</h2></div><span className="panel-index">02 / 02</span></div>
+              <p className="panel-description">Work on any goal at your own pace. Make each step smaller whenever you need.</p>
               {goals.length === 0 ? (
                 <div className="empty-state">
                   <span className="empty-mark" aria-hidden="true">＋</span>
@@ -372,24 +392,40 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="saved-goals">
-                  {goals.map((goal, index) => (
-                    <article key={goal.goal_id} className={`saved-goal ${goal.status === "done" || goal.status === "skipped" ? "saved-goal-settled" : ""}`}>
+                  {goals.map((goal, index) => {
+                    const step = goal.step;
+                    return (
+                    <article key={goal.id} className={`saved-goal ${step && step.status !== "pending" ? "saved-goal-settled" : ""}`}>
                       <div className="saved-goal-heading">
                         <span className="goal-sequence">{String(index + 1).padStart(2, "0")}</span>
-                        <h3>{goal.goal_text}</h3>
-                        {goal.status && goal.status !== "pending" && <span className={`goal-status goal-status-${goal.status}`}>{goal.status === "done" ? "Done" : "Later"}</span>}
+                        <h3>{goal.text}</h3>
+                        {step && step.status !== "pending" && <span className={`goal-status goal-status-${step.status}`}>{step.status === "done" ? "Done" : "Later"}</span>}
                       </div>
-                      <p className="next-step-label">A possible next step</p>
-                      <p className="next-step-text">{goal.step_text || "Choose one small action to get started."}</p>
-                      {goal.status === "pending" && (
+                      {step ? (
+                        <>
+                          <p className="next-step-label">Next small step</p>
+                          <p className="next-step-text">{step.text}</p>
+                          <p className="next-step-label">{step.minutes} {step.minutes === 1 ? "minute" : "minutes"}{step.shrink_count > 0 ? ` · made smaller ${step.shrink_count}×` : ""}</p>
+                          {step.status === "pending" ? (
+                            <div className="step-actions">
+                              <button type="button" disabled={busy} onClick={() => updateStep(step.id, "done")} className="done-button"><span aria-hidden="true">✓</span> Done</button>
+                              <button type="button" disabled={busy} onClick={() => updateStep(step.id, "too_big")} className="step-action-button">Make it smaller</button>
+                              <button type="button" disabled={busy} onClick={() => updateStep(step.id, "skip")} className="step-action-button quiet-action">Later</button>
+                            </div>
+                          ) : (
+                            <div className="step-actions">
+                              <button type="button" disabled={busy} onClick={() => planNext(goal.id)} className="secondary-button">{busy ? "Planning…" : "Plan next step"}<span aria-hidden="true">→</span></button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
                         <div className="step-actions">
-                          <button type="button" disabled={busy || !goal.step_id} onClick={() => goal.step_id && updateStep(goal.step_id, "done")} className="done-button"><span aria-hidden="true">✓</span> Done</button>
-                          <button type="button" disabled={busy || !goal.step_id} onClick={() => goal.step_id && updateStep(goal.step_id, "too_big")} className="step-action-button">Make it smaller</button>
-                          <button type="button" disabled={busy || !goal.step_id} onClick={() => goal.step_id && updateStep(goal.step_id, "skip")} className="step-action-button quiet-action">Later</button>
+                          <button type="button" disabled={busy} onClick={() => planNext(goal.id)} className="secondary-button">{busy ? "Planning…" : "Plan a small step"}<span aria-hidden="true">→</span></button>
                         </div>
                       )}
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               <button type="button" onClick={() => setScreen(1)} className="back-link"><span aria-hidden="true">←</span> Back to your goals</button>

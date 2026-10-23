@@ -207,3 +207,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+.all-goals { margin-top: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px; }
+.all-goals summary { cursor: pointer; color: var(--green); font-weight: 640; }
+.all-goals ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); }
+.all-goals li { margin: 4px 0; overflow-wrap: anywhere; }
