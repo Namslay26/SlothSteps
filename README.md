@@ -6,7 +6,8 @@ Photograph your vision board (or paste a few notes). A local Gemma model reads i
 
 Built for the [DEV Hacktoberfest Open-Source AI Challenge, Week 3: Slow and Steady](https://dev.to/challenges/hacktoberfest-week3-2026-10-19).
 
-<!-- TODO: add screenshots or a GIF of the two screens here -->
+Teaser Video: [SlothSteps Teaser](https://youtu.be/w98vKlORYGk?si=N1caDL0e-5zcMYX3)
+
 
 ## How it works
 
